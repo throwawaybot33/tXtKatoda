@@ -7,7 +7,7 @@ What it does:
   2. Merges + dedupes all streams
   3. Ejects pirate-panel patterns (bare-IP restreams of pay channels, reseller hosts)
   4. Tests every stream in parallel from YOUR connection
-  5. Writes a clean grouped .m3u + report + a stable tXtKatoda-latest.m3u (for apps)
+  5. Writes a clean grouped .m3u + report + a stable latest.m3u (for apps)
   6. Remembers runs (state file) and tells you what's NEW / DIED / BACK since last time
 
 Usage:
@@ -296,7 +296,7 @@ def main():
                 f.write(rebuild(e, sec) + "\n")
 
     # stable name for apps — always the newest feed, URL never changes
-    stable = os.path.join(a.outdir, "tXtKatoda-latest.m3u")
+    stable = os.path.join(a.outdir, "latest.m3u")
     shutil.copyfile(out_m3u, stable)
 
     print(f"\n{'='*46}\n✅ ALIVE: {len(alive)}   💀 dead/flagged: {len(results)-len(alive)}")

@@ -46,6 +46,18 @@ Done. Zap, favorite, hide what you don't like.
 
 ---
 
+## 📡 The self-updating feed (after the Action runs once)
+
+Point your player at this URL — it never changes, content refreshes daily:
+
+```
+https://raw.githubusercontent.com/throwawaybot33/tXtKatoda/main/feed/latest.m3u
+```
+
+(`feed/latest.m3u` = always the newest tested harvest. Dated files next to it are just history.)
+
+---
+
 ## 🌍 Two editions of the feed (read once)
 
 | Edition | Made by | Contains | Use when |
@@ -62,7 +74,7 @@ Geo-locked streams (HRT HD, RTL official CDN) only answer Croatian IPs.
 
 | File | What it does |
 |---|---|
-| `tXtKatoda-Harvester.py` | Crawls seed lists → dedupe → pirate-filter → stream-test → dated clean `.m3u` + churn report (NEW/DIED/BACK) + evidence report. `--discover` hunts new lists on GitHub via the API. |
+| `tXtKatoda-Harvester.py` | Crawls seed lists → dedupe → pirate-filter → stream-test → dated clean `.m3u` + stable `latest.m3u` + churn report (NEW/DIED/BACK) + evidence report. `--discover` hunts new lists on GitHub via the API. |
 | `IPTV-Doctor.py` | Cleans any single playlist from *your* connection: prunes dead, flags geo-locked, writes clean file + report. |
 | `playlists/` | Verified starter packs (Croatia, World). |
 | `.github/workflows/daily-harvest.yml` | Free cloud pipeline: runs the Harvester every day, commits a fresh feed to `feed/`. |
