@@ -7,7 +7,7 @@ What it does:
   2. Merges + dedupes all streams
   3. Ejects pirate-panel patterns (bare-IP restreams of pay channels, reseller hosts)
   4. Tests every stream in parallel from YOUR connection
-  5. Writes a clean grouped .m3u + report
+  5. Writes a clean grouped .m3u + report + a stable tXtKatoda-latest.m3u (for apps)
   6. Remembers runs (state file) and tells you what's NEW / DIED / BACK since last time
 
 Usage:
@@ -18,7 +18,7 @@ Usage:
   python3 tXtKatoda-Harvester.py --discover               # hunt NEW lists on GitHub
 Requires: pip install requests
 """
-import argparse, concurrent.futures as cf, json, os, re, sys, time
+import argparse, concurrent.futures as cf, json, os, re, shutil, sys, time
 try:
     import requests
 except ImportError:
@@ -295,6 +295,10 @@ def main():
             for e, s in group:
                 f.write(rebuild(e, sec) + "\n")
 
+    # stable name for apps — always the newest feed, URL never changes
+    stable = os.path.join(a.outdir, "tXtKatoda-latest.m3u")
+    shutil.copyfile(out_m3u, stable)
+
     print(f"\n{'='*46}\n✅ ALIVE: {len(alive)}   💀 dead/flagged: {len(results)-len(alive)}")
     print(f"🆕 NEW since last run: {len(new)}   ✝️  disappeared: {len(died)}   🔄 back from dead: {len(back)}")
     if new:   print("   new:  " + ", ".join(new[:15])[:180])
@@ -325,7 +329,7 @@ def main():
             f.write("\n")
     print(f"📄 Evidence:  {ev_path} ({len(evidence)} pirate entries documented)")
 
-    print(f"📄 Playlist: {out_m3u}\n📄 State:    {a.state}")
+    print(f"📄 Playlist: {out_m3u}\n📄 Stable:   {stable}\n📄 State:    {a.state}")
     print("\nTip: run daily (cron/Task Scheduler) and the NEW/DIED lines start telling you the ecosystem's story.")
 
 if __name__ == "__main__":
