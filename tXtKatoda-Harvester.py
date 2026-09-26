@@ -9,6 +9,7 @@ What it does:
   4. Tests every stream in parallel from YOUR connection
   5. Writes a clean grouped .m3u + report + a stable latest.m3u (for apps)
   6. Remembers runs (state file) and tells you what's NEW / DIED / BACK since last time
+  7. FORCE_KEEP: official geo-locked streams (fail test only abroad) are kept, tagged
 
 Usage:
   python3 tXtKatoda-Harvester.py                          # full run
@@ -114,6 +115,25 @@ def test_entry(e, timeout):
     return e, s, dt
 
 # ---------------- GitHub discovery ----------------
+# Official but geo-restricted streams — they FAIL the cloud test only because the
+# runner is abroad, not because they're dead. Kept tagged, in their own group.
+FORCE_GROUP = "🇭🇷 Home only (geo)"
+FORCE_KEEP = {
+    "https://bpcdnmanprod.nexttv.ht.hr/bpk-tv/HRT1/default/index.mpd":
+        ("HRT 1 HD (1080p) [HR only]", "HRT1.hr@HD", "https://i.imgur.com/lDSctzX.png"),
+    "https://bpcdnmanprod.nexttv.ht.hr/bpk-tv/HRT2/default/index.mpd":
+        ("HRT 2 HD (1080p) [HR only]", "HRT2.hr@HD", "https://i.imgur.com/yyePcl1.png"),
+    "https://bpcdnmanprod.nexttv.ht.hr/bpk-tv/HRT3/default/index.mpd":
+        ("HRT 3 HD (720p) [HR only]", "HRT3.hr@HD", "https://i.imgur.com/4OrOJRx.png"),
+    "https://bpcdnmanprod.nexttv.ht.hr/bpk-tv/HRT4/default/index.mpd":
+        ("HRT 4 HD (720p) [HR only]", "HRT4.hr@HD", "https://i.imgur.com/VcNrY0m.png"),
+    "https://d1cs5tlhj75jxe.cloudfront.net/rtl/playlist.m3u8":
+        ("RTL [HR only]", "RTLCroatia.hr", "https://i.imgur.com/zAjr6pO.png"),
+    "https://d1um9c09e0t5ag.cloudfront.net/rtl2/playlist.m3u8":
+        ("RTL 2 [HR only]", "RTL2Croatia.hr", "https://i.imgur.com/dQLaylJ.png"),
+    "https://d1rzyyum8t0q1e.cloudfront.net/rtl-kockica/playlist.m3u8":
+        ("RTL Kockica [HR only]", "RTLKockica.hr", "https://i.imgur.com/BiSVmRa.png"),
+}
 DISCOVER_QUERIES = ["iptv m3u playlist", "iptv playlist balkan", "m3u8 hrvatska", "free iptv m3u"]
 SEED_REPOS = {"iptv-org/iptv", "Free-TV/IPTV"}   # already covered by seeds
 
@@ -294,6 +314,13 @@ def main():
             f.write(f"\n# ===== {sec.upper()} ({len(group)}) =====\n")
             for e, s in group:
                 f.write(rebuild(e, sec) + "\n")
+
+        # force-kept official geo streams (dead from abroad, alive from a Croatian IP)
+        if FORCE_KEEP:
+            f.write(f"\n# ===== {FORCE_GROUP.upper()} ({len(FORCE_KEEP)}) =====\n")
+            f.write("# official CDN streams, geo-locked to Croatia — untestable from the cloud runner\n")
+            for u, (nm, tid, logo) in FORCE_KEEP.items():
+                f.write(f'#EXTINF:-1 tvg-id="{tid}" tvg-logo="{logo}" group-title="{FORCE_GROUP}",{nm}\n{u}\n')
 
     # stable name for apps — always the newest feed, URL never changes
     stable = os.path.join(a.outdir, "latest.m3u")
