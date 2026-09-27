@@ -19,14 +19,27 @@ Usage:
   python3 tXtKatoda-Harvester.py --discover               # hunt NEW lists on GitHub
 Requires: pip install requests
 """
-import argparse, concurrent.futures as cf, json, os, re, shutil, sys, time
+import argparse
+import concurrent.futures as cf
+import json
+import os
+import re
+import shutil
+import sys
+import time
+
 try:
     import requests
 except ImportError:
     sys.exit("Missing dependency: pip install requests")
 
-UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.3"}
+UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.3"
+}
+HTTP_SESSION = requests.Session()
+HTTP_SESSION.headers.update(UA)
+
 
 # ---------------- CONFIG: seeds ----------------
 # (section, url, keep_regex) — keep_regex=None keeps everything in that list
@@ -48,14 +61,21 @@ SEEDS = [
 ]
 
 # Pirate-pattern filters (learned in the field, updated 2026-09-26)
-PANEL      = re.compile(r":\d{4,5}/play/|\.cfd/|auth=testpub|mcquack|iptvhd\.ru|iptvperu|bantel-cdn|mangora1"
-                        r"|dash[34]\.antik\.sk"
-                        r"|176\.61\.157\.250|138\.121\.15\.230|23\.237\.104\.106|38\.19\.41\.46|38\.75\.136\.137"
-                        r"|151\.236\.247\.171|176\.118\.197\.101|88\.212\.15\.19|74\.91\.26\.218|92\.36\.202\.5"
-                        r"|213\.91\.179\.28|5\.57\.74\.130|185\.227\.34\.179|151\.80\.18\.177|45\.134\.141\.161", re.I)
-PAY_BRANDS = re.compile(r"disney|nickelodeon|nick jr|cartoon network|boomerang|\bHBO\b|cinemax|arena sport"
-                        r"|sport klub|\bsky\b|beIN|AXN|cinecanal|\bHOT\b|\bsci[ -]?fi\b", re.I)
-BARE_IP    = re.compile(r"https?://\d{1,3}(\.\d{1,3}){3}")
+PANEL = re.compile(
+    r":\d{4,5}/play/|\.cfd/|auth=testpub|mcquack|iptvhd\.ru|iptvperu|bantel-cdn|mangora1"
+    r"|dash[34]\.antik\.sk"
+    r"|176\.61\.157\.250|138\.121\.15\.230|23\.237\.104\.106|38\.19\.41\.46|38\.75\.136\.137"
+    r"|151\.236\.247\.171|176\.118\.197\.101|88\.212\.15\.19|74\.91\.26\.218|92\.36\.202\.5"
+    r"|213\.91\.179\.28|5\.57\.74\.130|185\.227\.34\.179|151\.80\.18\.177|45\.134\.141\.161",
+    re.I,
+)
+PAY_BRANDS = re.compile(
+    r"disney|nickelodeon|nick jr|cartoon network|boomerang|\bHBO\b|cinemax|arena sport"
+    r"|sport klub|\bsky\b|beIN|AXN|cinecanal|\bHOT\b|\bsci[ -]?fi\b",
+    re.I,
+)
+BARE_IP = re.compile(r"https?://\d{1,3}(\.\d{1,3}){3}")
+
 
 # ---------------- helpers ----------------
 def parse_m3u(text):
@@ -67,52 +87,76 @@ def parse_m3u(text):
         if line.startswith("#"):
             block.append(line)
         else:
-            if any(l.startswith("#EXTINF") for l in block):
+            if block and any(l.startswith("#EXTINF") for l in block):
                 entries.append({"block": block[:], "url": line.strip()})
             block = []
     return entries
 
+
 def name_of(e):
-    hdr = next(l for l in e["block"] if l.startswith("#EXTINF"))
-    n = re.sub(r"\s*[ⒼⓈⓎ]\s*", "", hdr.rsplit(",", 1)[-1])
-    return re.sub(r"\s+", " ", n).replace("[Geo-blocked]", "").replace("[Not 24/7]", "").strip()
+    for line in e.get("block", []):
+        if line.startswith("#EXTINF"):
+            hdr = line.rsplit(",", 1)
+            if len(hdr) == 2:
+                n = hdr[1]
+                n = re.sub(r"\s*[ⒼⓈⓎ]\s*", "", n)
+                return re.sub(r"\s+", " ", n).replace("[Geo-blocked]", "").replace("[Not 24/7]", "").strip()
+    return "(unknown)"
+
 
 def dirty_reason(e):
     """None if clean, else the pattern class that caught it."""
-    if PANEL.search(e["url"]):
+    url = e.get("url", "")
+    if PANEL.search(url):
         return "panel/provider host"
-    if PAY_BRANDS.search(name_of(e)) and BARE_IP.match(e["url"]):
+    if PAY_BRANDS.search(name_of(e)) and BARE_IP.match(url):
         return "pay brand on bare IP"
     return None
 
+
 def is_dirty(e):
     return dirty_reason(e) is not None
+
 
 def host_of(url):
     m = re.match(r"https?://([^/]+)", url)
     return m.group(1) if m else "?"
 
-def probe(url, timeout):
+
+def fetch_text(url, timeout=20, session=None):
+    sess = session or HTTP_SESSION
+    response = sess.get(url, timeout=timeout, headers=UA)
+    response.raise_for_status()
+    return response.text
+
+
+def probe(url, timeout, session=None):
+    sess = session or HTTP_SESSION
     try:
         t0 = time.time()
-        with requests.get(url, headers={**UA, "Range": "bytes=0-1024"}, timeout=timeout, stream=True) as r:
+        with sess.get(url, headers={**UA, "Range": "bytes=0-1024"}, timeout=timeout, stream=True) as r:
             chunk = next(r.iter_content(512), b"")
             dt = time.time() - t0
             if r.status_code in (200, 206) and chunk:
                 return ("OK" if dt < 4 else "SLOW", dt)
             return ("GEO?" if r.status_code in (401, 403, 404) else "BAD", dt)
+    except requests.RequestException:
+        return ("DEAD", 0)
     except Exception:
         return ("DEAD", 0)
 
-def test_entry(e, timeout):
-    if "youtube.com" in e["url"] or "youtu.be" in e["url"]:
+
+def test_entry(e, timeout, session=None):
+    url = e.get("url", "")
+    if "youtube.com" in url or "youtu.be" in url:
         return e, "YOUTUBE", 0
-    s, dt = probe(e["url"], timeout)
+    s, dt = probe(url, timeout, session=session)
     if s in ("DEAD", "GEO?"):
-        s2, dt2 = probe(e["url"], timeout * 2)
+        s2, dt2 = probe(url, timeout * 2, session=session)
         if s2 == "OK":
             s, dt = "OK", dt2
     return e, s, dt
+
 
 # ---------------- GitHub discovery ----------------
 # Official but geo-restricted streams — they FAIL the cloud test only because the
@@ -135,54 +179,91 @@ FORCE_KEEP = {
         ("RTL Kockica [HR only]", "RTLKockica.hr", "https://i.imgur.com/BiSVmRa.png"),
 }
 DISCOVER_QUERIES = ["iptv m3u playlist", "iptv playlist balkan", "m3u8 hrvatska", "free iptv m3u"]
-SEED_REPOS = {"iptv-org/iptv", "Free-TV/IPTV"}   # already covered by seeds
+SEED_REPOS = {"iptv-org/iptv", "Free-TV/IPTV"}  # already covered by seeds
 
-def gh_get(url):
-    r = requests.get(url, headers={**UA, "Accept": "application/vnd.github+json"}, timeout=15)
-    r.raise_for_status()
-    return r.json()
 
-def discover_lists(max_repos, queries):
+def gh_get(url, session=None):
+    sess = session or HTTP_SESSION
+    response = sess.get(url, headers={"Accept": "application/vnd.github+json", **UA}, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+def discover_lists(max_repos, queries, session=None):
     """Search GitHub for recently-updated list repos, extract raw .m3u URLs."""
     repos, seen_r = [], set()
     for q in queries:
         try:
-            d = gh_get(f"https://api.github.com/search/repositories?q={requests.utils.quote(q)}&sort=updated&per_page={max_repos}")
+            d = gh_get(
+                f"https://api.github.com/search/repositories?q={requests.utils.quote(q)}&sort=updated&per_page={max_repos}",
+                session=session,
+            )
             for r in d.get("items", []):
                 fn = r["full_name"]
                 if fn not in seen_r and fn not in SEED_REPOS:
-                    seen_r.add(fn); repos.append(r)
+                    seen_r.add(fn)
+                    repos.append(r)
             time.sleep(2)  # be polite to the search API
         except Exception as ex:
             print(f"   ⚠ search failed for '{q}': {ex}")
     repos = repos[:max_repos]
     print(f"🔎 Discovery: {len(repos)} candidate repos — scanning for playlist files...")
     found = []
+    seen_raw = set()
     for r in repos:
         fn, br = r["full_name"], r.get("default_branch", "main")
         try:
-            t = gh_get(f"https://api.github.com/repos/{fn}/git/trees/{br}?recursive=1")
+            t = gh_get(f"https://api.github.com/repos/{fn}/git/trees/{br}?recursive=1", session=session)
         except Exception:
-            print(f"   ⚠ tree failed: {fn}"); continue
+            print(f"   ⚠ tree failed: {fn}")
+            continue
         files = [x["path"] for x in t.get("tree", [])
                  if x.get("type") == "blob" and re.search(r"\.(m3u8?|txt)$", x["path"], re.I)
                  and x.get("size", 0) and x["size"] < 3_000_000][:3]
         for p in files:
-            found.append((fn, f"https://raw.githubusercontent.com/{fn}/{br}/{p}"))
+            raw = f"https://raw.githubusercontent.com/{fn}/{br}/{p}"
+            if raw not in seen_raw:
+                seen_raw.add(raw)
+                found.append((fn, raw))
         if files:
             print(f"   📁 {fn}: {len(files)} playlist file(s)")
     return found
 
+
 def rebuild(e, group):
-    hdr = next(l for l in e["block"] if l.startswith("#EXTINF"))
-    attrs = hdr[:hdr.rfind(",")]
-    attrs = re.sub(r'group-title="[^"]*"', f'group-title="{group}"', attrs)
-    if "group-title" not in attrs:
-        attrs += f' group-title="{group}"'
-    lines = [attrs.rstrip() + "," + name_of(e)]
-    lines += [l for l in e["block"] if not l.startswith("#EXTINF")]
-    lines.append(e["url"])
-    return "\n".join(lines)
+    block = e.get("block", [])
+    for line in block:
+        if line.startswith("#EXTINF"):
+            hdr = line[:line.rfind(",")]
+            if "," not in line:
+                return "\n".join(block + [e.get("url", "")])
+            attrs = hdr
+            attrs = re.sub(r'group-title="[^"]*"', f'group-title="{group}"', attrs)
+            if "group-title" not in attrs:
+                attrs += f' group-title="{group}"'
+            lines = [attrs.rstrip() + "," + name_of(e)]
+            lines += [l for l in block if not l.startswith("#EXTINF")]
+            lines.append(e.get("url", ""))
+            return "\n".join(lines)
+    return "\n".join(block + [e.get("url", "")])
+
+
+def load_state(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+
+
+def write_state(path, state):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=1)
+
 
 # ---------------- main ----------------
 def main():
@@ -205,23 +286,26 @@ def main():
 
     # 1. fetch seeds in parallel
     print(f"⬇  Fetching {len(seeds)} seed lists...")
+
     def get(seed):
         sec, url, keep = seed
         try:
-            txt = requests.get(url, headers=UA, timeout=60).text
+            txt = fetch_text(url, timeout=60)
             ent = parse_m3u(txt)
             if keep:
                 rx = re.compile(keep, re.I)
                 ent = [e for e in ent if rx.search("\n".join(e["block"]))]
             return [(sec, e) for e in ent]
         except Exception as ex:
-            print(f"   ⚠ seed failed: {url} ({ex})"); return []
-    with cf.ThreadPoolExecutor(min(8, len(seeds))) as ex:
+            print(f"   ⚠ seed failed: {url} ({ex})")
+            return []
+
+    with cf.ThreadPoolExecutor(min(8, len(seeds) or 1)) as ex:
         fetched = list(ex.map(get, seeds))
 
     # 2. merge + dedupe + filter
     seen, pool, dropped = set(), [], 0
-    evidence = []   # (source, claimed channel, host, pattern class)
+    evidence = []  # (source, claimed channel, host, pattern class)
     for seed_results in fetched:
         if a.max_per_seed:
             seed_results = seed_results[:a.max_per_seed]
@@ -238,12 +322,12 @@ def main():
     print(f"📋 {len(pool)} unique streams ({dropped} pirate-pattern junk ejected)")
 
     # 2b. GitHub discovery — find NEW lists, vet them, fold survivors in
-    disc_stats = []   # (repo, url, total, dirty, kept)
+    disc_stats = []  # (repo, url, total, dirty, kept)
     if a.discover:
         queries = a.discover_query.split(",") if a.discover_query else DISCOVER_QUERIES
-        for repo, raw in discover_lists(a.discover_repos, queries):
+        for repo, raw in discover_lists(a.discover_repos, queries, session=HTTP_SESSION):
             try:
-                ent = parse_m3u(requests.get(raw, headers=UA, timeout=20).text)
+                ent = parse_m3u(fetch_text(raw, timeout=20))
             except Exception:
                 continue
             if len(ent) < 5:
@@ -261,8 +345,10 @@ def main():
                     continue
                 if e["url"] in seen:
                     continue
-                seen.add(e["url"]); e["src"] = raw
-                pool.append(("🧪 Discovered", e)); kept += 1
+                seen.add(e["url"])
+                e["src"] = raw
+                pool.append(("🧪 Discovered", e))
+                kept += 1
             if kept:
                 print(f"   ✅ {repo}: {kept} streams accepted for testing")
             disc_stats.append((repo, raw, len(ent), dirty_n, kept))
@@ -274,7 +360,7 @@ def main():
         print(f"🔬 Testing with {a.workers} workers...")
         results = []
         with cf.ThreadPoolExecutor(a.workers) as ex:
-            futs = {ex.submit(test_entry, e, a.timeout): sec for sec, e in pool}
+            futs = {ex.submit(test_entry, e, a.timeout, session=HTTP_SESSION): sec for sec, e in pool}
             for i, f in enumerate(cf.as_completed(futs), 1):
                 e, s, dt = f.result()
                 results.append((futs[f], e, s, dt))
@@ -283,7 +369,7 @@ def main():
 
     # 4. state / churn
     today = time.strftime("%Y-%m-%d")
-    state = json.load(open(a.state)) if os.path.exists(a.state) else {}
+    state = load_state(a.state)
     new, died, back = [], [], []
     for sec, e, s, dt in results:
         u = e["url"]
@@ -291,21 +377,27 @@ def main():
             new.append(name_of(e))
         elif s == "OK" and state[u].get("status") != "OK":
             back.append(name_of(e))
-        state[u] = {"name": name_of(e), "section": sec, "first": state.get(u, {}).get("first", today),
-                    "status": s, "last_ok": today if s == "OK" else state.get(u, {}).get("last_ok")}
+        state[u] = {
+            "name": name_of(e),
+            "section": sec,
+            "first": state.get(u, {}).get("first", today),
+            "status": s,
+            "last_ok": today if s == "OK" else state.get(u, {}).get("last_ok"),
+        }
     known = set(state)
     current = {e["url"] for _, e, _, _ in results}
     for u in known - current:
         if state[u].get("status") == "OK":
-            died.append(state[u]["name"]); state[u]["status"] = "GONE"
-    os.makedirs(os.path.dirname(a.state) or ".", exist_ok=True)
-    json.dump(state, open(a.state, "w"), indent=1)
+            died.append(state[u]["name"])
+            state[u]["status"] = "GONE"
+    write_state(a.state, state)
 
     # 5. outputs
     alive = [(sec, e, s) for sec, e, s, dt in results if s in ("OK", "SLOW")]
     secs = []
     for sec, e, s in alive:
-        if sec not in secs: secs.append(sec)
+        if sec not in secs:
+            secs.append(sec)
     out_m3u = os.path.join(a.outdir, f"tXtKatoda-MegaPack-{today}.m3u")
     with open(out_m3u, "w", encoding="utf-8") as f:
         f.write(f"#EXTM3U\n# tXtKatoda Harvester run {today} — {len(alive)} alive streams\n")
@@ -328,8 +420,10 @@ def main():
 
     print(f"\n{'='*46}\n✅ ALIVE: {len(alive)}   💀 dead/flagged: {len(results)-len(alive)}")
     print(f"🆕 NEW since last run: {len(new)}   ✝️  disappeared: {len(died)}   🔄 back from dead: {len(back)}")
-    if new:   print("   new:  " + ", ".join(new[:15])[:180])
-    if died:  print("   died: " + ", ".join(died[:15])[:180])
+    if new:
+        print("   new:  " + ", ".join(new[:15])[:180])
+    if died:
+        print("   died: " + ", ".join(died[:15])[:180])
     if a.discover and disc_stats:
         print("\n🧪 DISCOVERY VERDICTS:")
         for repo, raw, total, dirty, kept in disc_stats:
@@ -358,6 +452,7 @@ def main():
 
     print(f"📄 Playlist: {out_m3u}\n📄 Stable:   {stable}\n📄 State:    {a.state}")
     print("\nTip: run daily (cron/Task Scheduler) and the NEW/DIED lines start telling you the ecosystem's story.")
+
 
 if __name__ == "__main__":
     main()
